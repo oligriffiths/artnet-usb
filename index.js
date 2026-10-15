@@ -13,7 +13,7 @@ Options:
   -b, --baud-rate <n>     Serial baud rate (default: 250000)
       --reply-ip <ip>     IP address reported in ArtPoll replies (default: 0.0.0.0)
       --no-autoconnect    Ask which device to use even if only one is found
-      --debug             Log the first channels of each received frame
+  -v, --verbose           Print debug info and DMX data
   -h, --help              Show this help`;
 
 function fail(message) {
@@ -31,7 +31,7 @@ try {
       'baud-rate': { type: 'string', short: 'b', default: '250000' },
       'reply-ip': { type: 'string', default: '0.0.0.0' },
       'no-autoconnect': { type: 'boolean', default: false },
-      debug: { type: 'boolean', default: false },
+      verbose: { type: 'boolean', short: 'v', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
   }));
@@ -61,7 +61,16 @@ const REPLY_IP = args['reply-ip'];
 if (!/^(\d{1,3})(\.\d{1,3}){3}$/.test(REPLY_IP) || REPLY_IP.split('.').some((n) => Number(n) > 255)) {
   fail(`Invalid reply IP "${REPLY_IP}"`);
 }
-const DEBUG = args.debug;
+const VERBOSE = args.verbose;
+
+function verbose(...message) {
+  if (VERBOSE) {
+    console.log('[verbose]', ...message);
+  }
+}
+
+verbose(`Options: universe ${UNIVERSE}, mode ${MODE}, baud ${BAUD_RATE}, device ${SERIAL_PATH || 'auto-detect'}, ` +
+  `autoconnect ${!args['no-autoconnect']}, reply IP ${REPLY_IP}`);
 const AUTOCONNECT = !args['no-autoconnect'];
 if (!AUTOCONNECT && !SERIAL_PATH && !process.stdin.isTTY) {
   fail('--no-autoconnect needs a terminal to ask which device to use (or pass --device)');
@@ -115,12 +124,20 @@ async function promptForPort(ports) {
   }
 }
 
+// Last logged port list, so verbose mode only prints it when it changes
+let lastPortList = null;
+
 // Path picked from the prompt, kept so retries and reconnects don't ask again
 let selectedPath = null;
 
 // Find a USB serial adapter, preferring known DMX interfaces, then FTDI chips
 async function findSerialDevice() {
   const ports = await SerialPort.list();
+  const portList = ports.map(describePort).join(', ') || 'none';
+  if (portList !== lastPortList) {
+    verbose(`Serial ports: ${portList}`);
+    lastPortList = portList;
+  }
   if (SERIAL_PATH) {
     const match = ports.find((port) => toCallUpPath(port.path) === toCallUpPath(SERIAL_PATH));
     return { path: SERIAL_PATH, manufacturer: match?.manufacturer };
@@ -227,8 +244,24 @@ function buildRawFrame(dmx) {
   return Buffer.concat([Buffer.from([0x00]), dmx]);
 }
 
+const stats = { received: 0, otherUniverse: 0, written: 0, dropped: 0 };
+
 let busy = false;
 let pending = null;
+
+function writeFrame(frame) {
+  busy = true;
+  serial.write(frame);
+  stats.written++;
+  serial.drain(() => {
+    busy = false;
+    if (pending && serial && serial.isOpen) {
+      const next = pending;
+      pending = null;
+      writeFrame(next);
+    }
+  });
+}
 
 function sendToSerial(dmx) {
   if (!serial || !serial.isOpen) {
@@ -237,24 +270,36 @@ function sendToSerial(dmx) {
   const frame = MODE === 'raw' ? buildRawFrame(dmx) : buildProFrame(dmx);
   // Drop stale frames: only keep the newest while a write is in flight
   if (busy) {
+    if (pending) {
+      stats.dropped++;
+    }
     pending = frame;
     return;
   }
-  busy = true;
-  serial.write(frame);
-  serial.drain(() => {
-    busy = false;
-    if (pending) {
-      const next = pending;
-      pending = null;
-      busy = true;
-      serial.write(next);
-      serial.drain(() => {
-        busy = false;
-      });
-    }
-  });
+  writeFrame(frame);
 }
+
+// Print channels as rows of 16, stopping after the last non-zero channel
+function formatDmx(dmx) {
+  let end = dmx.length;
+  while (end > 0 && dmx[end - 1] === 0) {
+    end--;
+  }
+  if (end === 0) {
+    return '    (all channels 0)';
+  }
+  const rows = [];
+  for (let i = 0; i < end; i += 16) {
+    const values = [...dmx.subarray(i, Math.min(i + 16, end))].map((v) => String(v).padStart(3));
+    rows.push(`    ${String(i + 1).padStart(3)}: ${values.join(' ')}`);
+  }
+  if (end < dmx.length) {
+    rows.push(`    (channels ${end + 1}-${dmx.length} are 0)`);
+  }
+  return rows.join('\n');
+}
+
+let lastDmx = null;
 
 // Use the library's communicator directly: ArtNetImpl's discovery crashes on
 // ArtPollReply packets from some nodes ("packet size mismatch")
@@ -271,6 +316,7 @@ function buildPollReply() {
 
 communicator.addListener('UDP_PACKET', (data, { address }) => {
   if (Poll.is(data)) {
+    verbose(`ArtPoll from ${address}, sending ArtPollReply`);
     communicator.send(buildPollReply(), address).catch((err) => {
       console.error('ArtPollReply failed:', err.message);
     });
@@ -286,21 +332,37 @@ communicator.addListener('UDP_PACKET', (data, { address }) => {
   if (!packet) {
     return;
   }
-  const { net, subNet, length, dmxData } = packet.payload;
+  const { net, subNet, length, sequence, dmxData } = packet.payload;
   // Port address: Net (7 bits) + SubUni (sub-net + universe, 8 bits)
   const universe = ((net & 0x7f) << 8) | subNet;
   if (universe !== UNIVERSE) {
+    stats.otherUniverse++;
     return;
   }
+  stats.received++;
   const dmx = Buffer.from(dmxData.slice(0, Math.min(length, 512)));
-  if (DEBUG) {
-    console.log(`ArtDmx universe ${universe}, ${dmx.length} ch: ${[...dmx.subarray(0, 8)].join(' ')} ...`);
+  if (VERBOSE && (!lastDmx || !dmx.equals(lastDmx))) {
+    verbose(`ArtDmx from ${address}, universe ${universe}, sequence ${sequence}, ${dmx.length} channels:\n${formatDmx(dmx)}`);
+    lastDmx = dmx;
   }
   sendToSerial(dmx);
 });
 
 // The library unrefs its socket; keep the process alive while the serial port reconnects
 const keepAlive = setInterval(() => {}, 1 << 30);
+
+if (VERBOSE) {
+  setInterval(() => {
+    if (stats.received || stats.otherUniverse) {
+      const other = stats.otherUniverse ? `, ${stats.otherUniverse} for other universes` : '';
+      verbose(`Last second: ${stats.received} frames received, ${stats.written} written, ${stats.dropped} dropped${other}`);
+    }
+    stats.received = 0;
+    stats.otherUniverse = 0;
+    stats.written = 0;
+    stats.dropped = 0;
+  }, 1000).unref();
+}
 
 await communicator.init();
 console.log(`Art-Net receiver listening on port ${ARTNET_PORT}, universe ${UNIVERSE}`);

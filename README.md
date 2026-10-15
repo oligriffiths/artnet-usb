@@ -92,14 +92,30 @@ The value is the full Art-Net port address (0–32767): Net × 256 + Sub-Net × 
 | `-b, --baud-rate <n>`   | `250000`    | Serial baud rate |
 | `--reply-ip <ip>`       | `0.0.0.0`   | IP address the app reports in its ArtPoll replies |
 | `--no-autoconnect`      |             | Ask which device to use even if only one is found |
-| `--debug`               |             | Log the first channels of each received frame |
+| `-v, --verbose`         |             | Print debug info and DMX data (see below) |
 | `-h, --help`            |             | Show usage |
 
 Example:
 
 ```sh
-node index.js --debug --universe 1 --device /dev/cu.usbserial-XXXXXXXX
-npm start -- --debug -u 1
+node index.js --verbose --universe 1 --device /dev/cu.usbserial-XXXXXXXX
+npm start -- -v -u 1
+```
+
+### Verbose mode
+
+`-v` / `--verbose` prints:
+
+- the options in use and the serial ports found
+- each ArtPoll received and replied to
+- the DMX data whenever it changes: source, universe, sequence number, and the channel values in rows of 16, stopping after the last non-zero channel
+- once a second while DMX is arriving: frames received, written to the adapter, and dropped, plus any packets for other universes
+
+```
+[verbose] ArtDmx from 192.168.1.20, universe 0, sequence 12, 512 channels:
+      1: 255 128   0  64
+    (channels 5-512 are 0)
+[verbose] Last second: 40 frames received, 40 written, 0 dropped
 ```
 
 ## Troubleshooting
@@ -110,7 +126,7 @@ npm start -- --debug -u 1
 lsof /dev/cu.usbserial-*
 ```
 
-**No DMX arriving**: on macOS, if other Art-Net apps are also listening on port 6454, unicast packets go to only one of them. Send to the broadcast address (for example `192.168.1.255`) or quit the other apps. Run with `--debug` to confirm frames arrive.
+**No DMX arriving**: on macOS, if other Art-Net apps are also listening on port 6454, unicast packets go to only one of them. Send to the broadcast address (for example `192.168.1.255`) or quit the other apps. Run with `-v` to confirm frames arrive.
 
 **`No USB serial device found`**: check the cable and run `ls /dev/cu.*`. Some adapters need an FTDI driver.
 
