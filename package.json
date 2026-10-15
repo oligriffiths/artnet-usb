@@ -1,0 +1,19 @@
+{
+  "name": "artnet-usb",
+  "version": "1.0.0",
+  "description": "Art-Net receiver that forwards DMX data to a USB serial device",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@rtf-dm/artnet-lib": "^1.6.13",
+    "@rtf-dm/artnet-packets": "^0.5.24",
+    "serialport": "^12.0.0"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
