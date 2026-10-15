@@ -12,6 +12,7 @@ Options:
   -m, --mode <pro|raw>    pro = ENTTEC DMX USB Pro framing, raw = unframed DMX bytes (default: pro)
   -b, --baud-rate <n>     Serial baud rate (default: 250000)
       --reply-ip <ip>     IP address reported in ArtPoll replies (default: 0.0.0.0)
+      --no-autoconnect    Ask which device to use even if only one is found
       --debug             Log the first channels of each received frame
   -h, --help              Show this help`;
 
@@ -29,6 +30,7 @@ try {
       mode: { type: 'string', short: 'm', default: 'pro' },
       'baud-rate': { type: 'string', short: 'b', default: '250000' },
       'reply-ip': { type: 'string', default: '0.0.0.0' },
+      'no-autoconnect': { type: 'boolean', default: false },
       debug: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -60,6 +62,10 @@ if (!/^(\d{1,3})(\.\d{1,3}){3}$/.test(REPLY_IP) || REPLY_IP.split('.').some((n) 
   fail(`Invalid reply IP "${REPLY_IP}"`);
 }
 const DEBUG = args.debug;
+const AUTOCONNECT = !args['no-autoconnect'];
+if (!AUTOCONNECT && !SERIAL_PATH && !process.stdin.isTTY) {
+  fail('--no-autoconnect needs a terminal to ask which device to use (or pass --device)');
+}
 const RETRY_MS = 2000;
 const FTDI_VENDOR_ID = '0403';
 const USB_SERIAL_PATTERN = /usbserial|usbmodem|ttyUSB|ttyACM/i;
@@ -79,9 +85,9 @@ function describePort(port) {
   return details.length ? `${toCallUpPath(port.path)} (${details.join(', ')})` : toCallUpPath(port.path);
 }
 
-// Ask which device to use; Enter picks the first (most likely DMX) entry
+// Ask which device to use; ports are sorted with the most likely DMX adapter first
 async function promptForPort(ports) {
-  console.log('Found several USB serial devices:');
+  console.log(ports.length === 1 ? 'Found a USB serial device:' : 'Found several USB serial devices:');
   ports.forEach((port, i) => {
     console.log(`  ${i + 1}) ${describePort(port)}`);
   });
@@ -92,8 +98,10 @@ async function promptForPort(ports) {
   });
   try {
     while (true) {
-      const answer = (await rl.question(`Select a device [1-${ports.length}] (default 1): `)).trim();
-      if (answer === '') {
+      // With --no-autoconnect the user must type a number; otherwise Enter picks the first
+      const hint = AUTOCONNECT ? ' (default 1)' : '';
+      const answer = (await rl.question(`Select a device [1-${ports.length}]${hint}: `)).trim();
+      if (answer === '' && AUTOCONNECT) {
         return ports[0];
       }
       const choice = Number(answer);
@@ -133,7 +141,7 @@ async function findSerialDevice() {
   usbPorts.sort((a, b) => rank(a) - rank(b));
 
   let chosen = usbPorts.find((port) => toCallUpPath(port.path) === selectedPath);
-  if (!chosen && usbPorts.length === 1) {
+  if (!chosen && usbPorts.length === 1 && AUTOCONNECT) {
     chosen = usbPorts[0];
   } else if (!chosen && !process.stdin.isTTY) {
     chosen = usbPorts[0];

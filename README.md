@@ -53,6 +53,8 @@ Found several USB serial devices:
 Select a device [1-2] (default 1):
 ```
 
+To be asked even when only one device is found, pass `--no-autoconnect`. You then have to type a device number; Enter alone doesn't pick one. This mode needs a terminal, unless you also pass `--device`.
+
 The app keeps using your choice when it reconnects. If it isn't running in a terminal (for example as a service), it uses the first device without asking.
 
 To skip the prompt, pass the path with `--device` (or `-d`):
@@ -89,6 +91,7 @@ The value is the full Art-Net port address (0–32767): Net × 256 + Sub-Net × 
 | `-m, --mode <pro\|raw>` | `pro`       | `pro` wraps the data in ENTTEC DMX USB Pro messages; `raw` writes the start code and channel bytes unframed |
 | `-b, --baud-rate <n>`   | `250000`    | Serial baud rate |
 | `--reply-ip <ip>`       | `0.0.0.0`   | IP address the app reports in its ArtPoll replies |
+| `--no-autoconnect`      |             | Ask which device to use even if only one is found |
 | `--debug`               |             | Log the first channels of each received frame |
 | `-h, --help`            |             | Show usage |
 
