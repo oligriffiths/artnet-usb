@@ -3,18 +3,62 @@ import { Dmx, Poll, PollReply } from '@rtf-dm/artnet-packets';
 import { SerialPort } from 'serialport';
 import { parseArgs } from 'node:util';
 
-// Configuration (override with environment variables)
-const { values: args } = parseArgs({
-  options: {
-    device: { type: 'string', short: 'd' },
-  },
-});
+const USAGE = `Usage: node index.js [options]
 
-// Serial device: --device, then SERIAL_PATH, otherwise auto-detected
-const SERIAL_PATH = args.device || process.env.SERIAL_PATH;
-const BAUD_RATE = Number(process.env.BAUD_RATE || 250000);
-const UNIVERSE = Number(process.env.UNIVERSE || 0); // Art-Net port address (0-32767)
-const MODE = process.env.MODE || 'pro'; // 'pro' = ENTTEC DMX USB Pro framing, 'raw' = raw DMX bytes
+Options:
+  -d, --device <path>     Serial device path (default: auto-detect)
+  -u, --universe <n>      Art-Net port address to forward, 0-32767 (default: 0)
+  -m, --mode <pro|raw>    pro = ENTTEC DMX USB Pro framing, raw = unframed DMX bytes (default: pro)
+  -b, --baud-rate <n>     Serial baud rate (default: 250000)
+      --reply-ip <ip>     IP address reported in ArtPoll replies (default: 0.0.0.0)
+      --debug             Log the first channels of each received frame
+  -h, --help              Show this help`;
+
+function fail(message) {
+  console.error(`${message}\n\n${USAGE}`);
+  process.exit(1);
+}
+
+let args;
+try {
+  ({ values: args } = parseArgs({
+    options: {
+      device: { type: 'string', short: 'd' },
+      universe: { type: 'string', short: 'u', default: '0' },
+      mode: { type: 'string', short: 'm', default: 'pro' },
+      'baud-rate': { type: 'string', short: 'b', default: '250000' },
+      'reply-ip': { type: 'string', default: '0.0.0.0' },
+      debug: { type: 'boolean', default: false },
+      help: { type: 'boolean', short: 'h', default: false },
+    },
+  }));
+} catch (err) {
+  fail(err.message);
+}
+
+if (args.help) {
+  console.log(USAGE);
+  process.exit(0);
+}
+
+const SERIAL_PATH = args.device; // otherwise auto-detected
+const UNIVERSE = Number(args.universe);
+if (!Number.isInteger(UNIVERSE) || UNIVERSE < 0 || UNIVERSE > 32767) {
+  fail(`Invalid universe "${args.universe}": must be an integer from 0 to 32767`);
+}
+const MODE = args.mode;
+if (MODE !== 'pro' && MODE !== 'raw') {
+  fail(`Invalid mode "${MODE}": must be "pro" or "raw"`);
+}
+const BAUD_RATE = Number(args['baud-rate']);
+if (!Number.isInteger(BAUD_RATE) || BAUD_RATE <= 0) {
+  fail(`Invalid baud rate "${args['baud-rate']}"`);
+}
+const REPLY_IP = args['reply-ip'];
+if (!/^(\d{1,3})(\.\d{1,3}){3}$/.test(REPLY_IP) || REPLY_IP.split('.').some((n) => Number(n) > 255)) {
+  fail(`Invalid reply IP "${REPLY_IP}"`);
+}
+const DEBUG = args.debug;
 const RETRY_MS = 2000;
 const FTDI_VENDOR_ID = '0403';
 const USB_SERIAL_PATTERN = /usbserial|usbmodem|ttyUSB|ttyACM/i;
@@ -157,7 +201,7 @@ function sendToSerial(dmx) {
 const communicator = new NetworkCommunicator();
 
 function buildPollReply() {
-  const ip = (process.env.REPLY_IP || '0.0.0.0').split('.').map((n) => parseInt(n, 10));
+  const ip = REPLY_IP.split('.').map((n) => parseInt(n, 10));
   return new PollReply({
     macAddress: communicator.selfMacAddress.split(':').map((v) => parseInt(v, 16)),
     port: ARTNET_PORT,
@@ -189,7 +233,7 @@ communicator.addListener('UDP_PACKET', (data, { address }) => {
     return;
   }
   const dmx = Buffer.from(dmxData.slice(0, Math.min(length, 512)));
-  if (process.env.DEBUG) {
+  if (DEBUG) {
     console.log(`ArtDmx universe ${universe}, ${dmx.length} ch: ${[...dmx.subarray(0, 8)].join(' ')} ...`);
   }
   sendToSerial(dmx);

@@ -58,23 +58,34 @@ ls /dev/cu.*                # macOS
 ls /dev/ttyUSB* /dev/ttyACM*  # Linux
 ```
 
+### Choosing a universe
+
+By default, the app forwards universe 0. Use `--universe` (or `-u`) to pick another:
+
+```sh
+node index.js --universe 1
+npm start -- -u 1
+```
+
+The value is the full Art-Net port address (0–32767): Net × 256 + Sub-Net × 16 + Universe.
+
 ### Options
 
-You set these with environment variables:
-
-| Variable      | Default      | Description |
-|---------------|--------------|-------------|
-| `UNIVERSE`    | `0`          | Art-Net port address to forward (0–32767; Net × 256 + Sub-Net × 16 + Universe) |
-| `MODE`        | `pro`        | `pro` wraps the data in ENTTEC DMX USB Pro messages; `raw` writes the start code and channel bytes unframed |
-| `BAUD_RATE`   | `250000`     | Serial baud rate |
-| `SERIAL_PATH` | auto-detect  | Serial device path; `--device` takes priority over this |
-| `REPLY_IP`    | `0.0.0.0`    | IP address the app reports in its ArtPoll replies |
-| `DEBUG`       | unset        | Set to any value to log the first channels of each received frame |
+| Option                  | Default     | Description |
+|-------------------------|-------------|-------------|
+| `-d, --device <path>`   | auto-detect | Serial device path |
+| `-u, --universe <n>`    | `0`         | Art-Net port address to forward (0–32767) |
+| `-m, --mode <pro\|raw>` | `pro`       | `pro` wraps the data in ENTTEC DMX USB Pro messages; `raw` writes the start code and channel bytes unframed |
+| `-b, --baud-rate <n>`   | `250000`    | Serial baud rate |
+| `--reply-ip <ip>`       | `0.0.0.0`   | IP address the app reports in its ArtPoll replies |
+| `--debug`               |             | Log the first channels of each received frame |
+| `-h, --help`            |             | Show usage |
 
 Example:
 
 ```sh
-DEBUG=1 UNIVERSE=1 npm start -- --device /dev/cu.usbserial-XXXXXXXX
+node index.js --debug --universe 1 --device /dev/cu.usbserial-XXXXXXXX
+npm start -- --debug -u 1
 ```
 
 ## Troubleshooting
@@ -85,7 +96,7 @@ DEBUG=1 UNIVERSE=1 npm start -- --device /dev/cu.usbserial-XXXXXXXX
 lsof /dev/cu.usbserial-*
 ```
 
-**No DMX arriving**: on macOS, if other Art-Net apps are also listening on port 6454, unicast packets go to only one of them. Send to the broadcast address (for example `192.168.1.255`) or quit the other apps. Run with `DEBUG=1` to confirm frames arrive.
+**No DMX arriving**: on macOS, if other Art-Net apps are also listening on port 6454, unicast packets go to only one of them. Send to the broadcast address (for example `192.168.1.255`) or quit the other apps. Run with `--debug` to confirm frames arrive.
 
 **`No USB serial device found`**: check the cable and run `ls /dev/cu.*`. Some adapters need an FTDI driver.
 
