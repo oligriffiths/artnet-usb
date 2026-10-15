@@ -2,6 +2,7 @@ import { NetworkCommunicator, ARTNET_PORT } from '@rtf-dm/artnet-lib';
 import { Dmx, Poll, PollReply } from '@rtf-dm/artnet-packets';
 import { SerialPort } from 'serialport';
 import { parseArgs } from 'node:util';
+import readline from 'node:readline/promises';
 
 const USAGE = `Usage: node index.js [options]
 
@@ -73,6 +74,42 @@ function toCallUpPath(path) {
   return path.replace(/^\/dev\/tty\./, '/dev/cu.');
 }
 
+function describePort(port) {
+  const details = [port.manufacturer, port.serialNumber && `serial ${port.serialNumber}`].filter(Boolean);
+  return details.length ? `${toCallUpPath(port.path)} (${details.join(', ')})` : toCallUpPath(port.path);
+}
+
+// Ask which device to use; Enter picks the first (most likely DMX) entry
+async function promptForPort(ports) {
+  console.log('Found several USB serial devices:');
+  ports.forEach((port, i) => {
+    console.log(`  ${i + 1}) ${describePort(port)}`);
+  });
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  rl.on('SIGINT', () => {
+    rl.close();
+    shutdown();
+  });
+  try {
+    while (true) {
+      const answer = (await rl.question(`Select a device [1-${ports.length}] (default 1): `)).trim();
+      if (answer === '') {
+        return ports[0];
+      }
+      const choice = Number(answer);
+      if (Number.isInteger(choice) && choice >= 1 && choice <= ports.length) {
+        return ports[choice - 1];
+      }
+      console.log('Invalid selection.');
+    }
+  } finally {
+    rl.close();
+  }
+}
+
+// Path picked from the prompt, kept so retries and reconnects don't ask again
+let selectedPath = null;
+
 // Find a USB serial adapter, preferring known DMX interfaces, then FTDI chips
 async function findSerialDevice() {
   const ports = await SerialPort.list();
@@ -84,11 +121,26 @@ async function findSerialDevice() {
   if (usbPorts.length === 0) {
     return null;
   }
-  const dmx = usbPorts.find((port) => DMX_MANUFACTURER_PATTERN.test(port.manufacturer || ''));
-  const ftdi = usbPorts.find((port) => port.vendorId?.toLowerCase() === FTDI_VENDOR_ID);
-  const chosen = dmx || ftdi || usbPorts[0];
-  if (usbPorts.length > 1) {
-    console.warn(`Found ${usbPorts.length} USB serial devices, using ${chosen.path} (use --device to override)`);
+  const rank = (port) => {
+    if (DMX_MANUFACTURER_PATTERN.test(port.manufacturer || '')) {
+      return 0;
+    }
+    if (port.vendorId?.toLowerCase() === FTDI_VENDOR_ID) {
+      return 1;
+    }
+    return 2;
+  };
+  usbPorts.sort((a, b) => rank(a) - rank(b));
+
+  let chosen = usbPorts.find((port) => toCallUpPath(port.path) === selectedPath);
+  if (!chosen && usbPorts.length === 1) {
+    chosen = usbPorts[0];
+  } else if (!chosen && !process.stdin.isTTY) {
+    chosen = usbPorts[0];
+    console.warn(`Found ${usbPorts.length} USB serial devices, using ${toCallUpPath(chosen.path)} (use --device to choose)`);
+  } else if (!chosen) {
+    chosen = await promptForPort(usbPorts);
+    selectedPath = toCallUpPath(chosen.path);
   }
   return { path: toCallUpPath(chosen.path), manufacturer: chosen.manufacturer };
 }
@@ -239,12 +291,12 @@ communicator.addListener('UDP_PACKET', (data, { address }) => {
   sendToSerial(dmx);
 });
 
-connectSerial();
-await communicator.init();
-console.log(`Art-Net receiver listening on port ${ARTNET_PORT}, universe ${UNIVERSE}`);
-
 // The library unrefs its socket; keep the process alive while the serial port reconnects
 const keepAlive = setInterval(() => {}, 1 << 30);
+
+await communicator.init();
+console.log(`Art-Net receiver listening on port ${ARTNET_PORT}, universe ${UNIVERSE}`);
+connectSerial();
 
 async function shutdown() {
   if (shuttingDown) {

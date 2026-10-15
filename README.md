@@ -8,7 +8,7 @@ It uses [`@rtf-dm/artnet-lib`](https://www.npmjs.com/package/@rtf-dm/artnet-lib)
 
 - Listens for Art-Net `ArtDmx` packets on UDP port 6454 and forwards one universe to the USB interface
 - Answers `ArtPoll` so lighting software can discover it
-- Finds the USB serial adapter automatically, preferring DMXking/ENTTEC, then FTDI-based adapters
+- Finds the USB serial adapter automatically, and asks which one to use if there are several
 - Reconnects if the adapter is unplugged, then plugged back in
 - Drops stale frames when the serial link falls behind, so output stays current
 
@@ -44,7 +44,18 @@ Press Ctrl+C to stop.
 
 ### Choosing a device
 
-If several USB serial devices are connected, or the scan picks the wrong one, pass the path with `--device` (or `-d`):
+If several USB serial devices are connected, the app lists them and asks which one to use. Likely DMX adapters (DMXking/ENTTEC, then FTDI) come first, and pressing Enter picks the first one:
+
+```
+Found several USB serial devices:
+  1) /dev/cu.usbserial-XXXXXXXX (DMXking.com, serial XXXXXXXX)
+  2) /dev/cu.usbmodem1101 (Arduino LLC)
+Select a device [1-2] (default 1):
+```
+
+The app keeps using your choice when it reconnects. If it isn't running in a terminal (for example as a service), it uses the first device without asking.
+
+To skip the prompt, pass the path with `--device` (or `-d`):
 
 ```sh
 node index.js --device /dev/cu.usbserial-XXXXXXXX
